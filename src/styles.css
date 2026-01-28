@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-nobody-dark text-gray-100 font-mono;
+  }
+}
+
+@layer components {
+  .neon-glow {
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.6), 0 0 40px rgba(139, 92, 246, 0.3);
+  }
+  
+  .mint-glow {
+    box-shadow: 0 0 15px rgba(110, 231, 183, 0.5);
+  }
+}
