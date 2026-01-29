@@ -58,8 +58,7 @@ impl ZKHandler {
         match output_result {
             Ok(result) if result.status.success() => {
                 // Read the generated proof
-                let proof_data = std::fs::read_to_string(format!("{}/proofs/proof.hex", self.circuit_path))
-                    .unwrap_or_else(|_| hex::encode(&[1, 2, 3, 4])); // Mock proof for demo
+                let proof_data = std::fs::read_to_string(format!("{}/proofs/proof.hex", self.circuit_path))?;
 
                 Ok(ZKProof {
                     proof: proof_data,
@@ -71,30 +70,16 @@ impl ZKHandler {
                 })
             }
             _ => {
-                // Fallback: Generate mock proof for demo purposes
-                println!("⚠️  Noir compiler not found or failed, generating mock proof");
-                self.generate_mock_proof(request)
+
+                let error_msg = "❌ Noir ZK Proof Generation Failed! Ensure 'nargo' is installed and circuit is compiled.";
+                eprintln!("{}", error_msg);
+                Err(error_msg.into())
+            }
             }
         }
-    }
 
-    fn generate_mock_proof(&self, request: ProofRequest) -> Result<ZKProof, Box<dyn Error>> {
-        // Generate a mock proof for demonstration
-        let mock_proof = hex::encode(format!(
-            "NOIR_PROOF_v1:balance_check:bid_{}:ceiling_{}",
-            request.bid_amount, request.price_ceiling
-        ));
 
-        Ok(ZKProof {
-            proof: mock_proof,
-            public_inputs: vec![request.bid_amount.to_string()],
-            encrypted_intent: serde_json::to_string(&serde_json::json!({
-                "bid_amount": request.bid_amount,
-                "verified": true,
-                "timestamp": chrono::Utc::now().timestamp(),
-            }))?,
-        })
-    }
+
 
     pub fn verify_proof(&self, proof: &ZKProof) -> Result<bool, Box<dyn Error>> {
         // In production, this would call Noir's verification

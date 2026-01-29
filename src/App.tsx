@@ -18,10 +18,14 @@ import { Feed } from "./components/Feed";
 import { ProviderDashboard } from "./components/ProviderDashboard";
 import { ServiceCreator } from "./components/ServiceCreator";
 import { ShieldedWallet } from "./components/ShieldedWallet";
+import { IdentityInitialization } from "./components/IdentityInitialization";
+import { WalletCabinet } from "./components/WalletCabinet";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Archives } from "./components/Archives";
 import { SmartEscrow } from "./components/SmartEscrow";
 import { ConfidentialCompute } from "./components/ConfidentialCompute";
 import { DealNotification } from "./components/DealNotification";
+import { DelegationCenter } from "./components/DelegationCenter";
 
 // Types
 import { Peer, MeshEvent, ViewState } from "./types";
@@ -33,7 +37,7 @@ function App() {
     const [isProcessing, setIsProcessing] = useState(false);
 
     // UI State
-    const [view, setView] = useState<ViewState | "provider" | "service-creator">("nexus");
+    const [view, setView] = useState<ViewState | "provider" | "service-creator" | "delegation">("nexus");
     const [showConfig, setShowConfig] = useState(false);
     const [logs, setLogs] = useState<string[]>([]);
     const [notification, setNotification] = useState<string | null>(null);
@@ -194,99 +198,124 @@ function App() {
     };
 
     return (
-        <Nexus isOnline={isOnline} peerCount={peers.length} showConfig={() => setShowConfig(true)}>
-            {/* Background Radar is always visible in Nexus mode */}
-            <MeshRadar peers={peers} />
+        <ErrorBoundary>
+            <Nexus isOnline={isOnline} peerCount={peers.length} showConfig={() => setShowConfig(true)}>
+                {/* Background Radar is always visible in Nexus mode */}
+                <MeshRadar peers={peers} />
 
-            {/* Main Menu Bar */}
-            {view === "nexus" && (
-                <div className="absolute top-4 left-4 z-50 flex gap-2">
-                    <MenuButton label="MERCHANT" onClick={handleSwitchToProvider} active={false} color="nobody-mint" />
-                    <MenuButton label="WALLET" onClick={() => setView("wallet")} active={false} color="nobody-mint" />
-                </div>
-            )}
+                {/* Main Menu Bar */}
+                {view === "nexus" && (
+                    <div className="absolute top-4 left-4 z-50 flex gap-2">
+                        <MenuButton label="MERCHANT" onClick={handleSwitchToProvider} active={false} color="nobody-mint" />
+                        <MenuButton label="WALLET" onClick={() => setView("wallet-cabinet")} active={false} color="nobody-mint" />
+                    </div>
+                )}
 
-            {/* Live System Logs */}
-            <AgentLog visible={(logs.length > 0 || isProcessing) && view === "nexus"} logs={logs} />
+                {/* Live System Logs */}
+                <AgentLog visible={(logs.length > 0 || isProcessing) && view === "nexus"} logs={logs} />
 
-            {/* Main Command Input */}
-            {view === "nexus" && (
-                <IntentComposer
-                    intent={intent}
-                    setIntent={setIntent}
-                    onSubmit={handleIntentSubmit}
-                    isProcessing={isProcessing}
+                {/* Main Command Input */}
+                {view === "nexus" && (
+                    <IntentComposer
+                        intent={intent}
+                        setIntent={setIntent}
+                        onSubmit={handleIntentSubmit}
+                        isProcessing={isProcessing}
+                    />
+                )}
+
+                {/* Overlays */}
+                <NotificationToast
+                    message={notification}
+                    onClose={() => setNotification(null)}
                 />
-            )}
 
-            {/* Overlays */}
-            <NotificationToast
-                message={notification}
-                onClose={() => setNotification(null)}
-            />
-
-            <IntegrityShield
-                visible={view === "integrity"}
-                onComplete={() => { }}
-            />
-
-            <SmartMeshChat
-                visible={view === "negotiation"}
-                onComplete={() => setView("report")}
-                context={chatContext}
-            />
-
-            <DailyReport
-                visible={view === "report"}
-                onClose={() => setView("nexus")}
-            />
-
-            <NodeConfig
-                visible={showConfig}
-                onClose={() => setShowConfig(false)}
-            />
-
-            {/* Provider Components */}
-            <ProviderDashboard
-                visible={view === "provider"}
-                onClose={() => setView("nexus")}
-                onCreateService={handleCreateService}
-            />
-
-            {view === "service-creator" && (
-                <ServiceCreator
-                    onClose={() => setView("provider")}
-                    onDeploy={handleDeployService}
+                <IntegrityShield
+                    visible={view === "integrity"}
+                    onComplete={() => { }}
                 />
-            )}
 
-            <ShieldedWallet
-                visible={view === "wallet"}
-                onClose={() => setView("nexus")}
-            />
+                <SmartMeshChat
+                    visible={view === "negotiation"}
+                    onComplete={() => setView("report")}
+                    context={chatContext}
+                />
 
-            <Archives // Rendered Archives component
-                visible={view === "archives"}
-                onClose={() => setView("nexus")}
-            />
+                <DailyReport
+                    visible={view === "report"}
+                    onClose={() => setView("nexus")}
+                />
 
-            <SmartEscrow // Added SmartEscrow component
-                visible={view === "escrow"}
-                onClose={() => setView("nexus")}
-                onRelease={handleReleaseFunds}
-            />
+                <NodeConfig
+                    visible={showConfig}
+                    onClose={() => setShowConfig(false)}
+                />
 
-            <ConfidentialCompute
-                visible={view === "compute"}
-                onClose={() => setView("nexus")}
-            />
+                {/* Provider Components */}
+                {/* Provider Components */}
+                <ProviderDashboard
+                    visible={view === "provider"}
+                    onClose={() => setView("nexus")}
+                    onCreateService={handleCreateService}
+                />
 
-            <DealNotification
-                visible={view === "notification"}
-                onClose={() => setView("nexus")}
-                onAccept={handleAcceptDeal}
-            />
-        </Nexus>
+                {/* Wallet Integration */}
+                <WalletCabinet
+                    visible={view === "wallet-cabinet"}
+                    onClose={() => setView("nexus")}
+                    onOpenConfig={() => setShowConfig(true)}
+                    onAddNew={() => setView("identity-init")}
+                    onDelegate={() => setView("delegation")}
+                />
+
+                {view === "identity-init" && (
+                    <IdentityInitialization
+                        onComplete={() => setView("wallet-cabinet")}
+                        onBack={() => setView("nexus")}
+                    />
+                )}
+
+                {view === "service-creator" && (
+                    <ServiceCreator
+                        onClose={() => setView("provider")}
+                        onDeploy={handleDeployService}
+                    />
+                )}
+
+                <ShieldedWallet
+                    visible={view === "wallet"}
+                    onClose={() => setView("nexus")}
+                />
+
+                <Archives // Rendered Archives component
+                    visible={view === "archives"}
+                    onClose={() => setView("nexus")}
+                />
+
+                <SmartEscrow // Added SmartEscrow component
+                    visible={view === "escrow"}
+                    onClose={() => setView("nexus")}
+                    onRelease={handleReleaseFunds}
+                />
+
+                <ConfidentialCompute
+                    visible={view === "compute"}
+                    onClose={() => setView("nexus")}
+                />
+
+                <DealNotification
+                    visible={view === "notification"}
+                    onClose={() => setView("nexus")}
+                    onAccept={handleAcceptDeal}
+                />
+
+                <DelegationCenter
+                    visible={view === "delegation"}
+                    onComplete={() => setView("wallet-cabinet")}
+                    onCancel={() => setView("wallet-cabinet")}
+                />
+            </Nexus>
+        </ErrorBoundary>
     );
 }
 

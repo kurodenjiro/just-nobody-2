@@ -1,12 +1,16 @@
+mod app_initializer;
 mod mesh;
 mod agent;
 mod zk_handler;
 mod ollama_manager;
+mod blockchain_bridge;
 
+use app_initializer::SystemBootstrap;
 use mesh::{MeshNetwork, PrivacyIntent};
 use agent::{SharkAgent, SharkNegotiation};
 use zk_handler::{ZKHandler, ProofRequest, ZKProof};
 use ollama_manager::OllamaManager;
+use blockchain_bridge::BlockchainBridge;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use tauri::{State, Manager, Emitter};
@@ -17,6 +21,7 @@ pub struct AppState {
     pub agent: Arc<SharkAgent>,
     pub zk_handler: Arc<ZKHandler>,
     pub ollama: Arc<OllamaManager>,
+    pub bridge: Arc<Mutex<BlockchainBridge>>,
 }
 
 #[tauri::command]
@@ -109,6 +114,91 @@ async fn generate_zk_proof(
     result
 }
 
+#[tauri::command]
+async fn sync_blockchain_state(
+    wallet: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<String, String> {
+    let state = state.lock().await;
+    let bridge = state.bridge.lock().await;
+    match bridge.sync_state(&wallet).await {
+        Ok(_) => Ok("Synced".to_string()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+async fn enable_magicblock_trading(
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<String, String> {
+    let state = state.lock().await;
+    let mut bridge = state.bridge.lock().await;
+    let session = bridge.init_ephemeral_session();
+    Ok(format!("Session Created: {}", session.session_id))
+}
+
+#[tauri::command]
+async fn get_bridge_status(
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<String, String> {
+    let state = state.lock().await;
+    let bridge = state.bridge.lock().await;
+    Ok(bridge.get_status())
+}
+
+#[tauri::command]
+async fn get_wallet_snapshot(
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<serde_json::Value, String> {
+    let state = state.lock().await;
+    let bridge = state.bridge.lock().await;
+    match bridge.get_latest_snapshot() {
+        Ok(snapshot) => Ok(serde_json::to_value(snapshot).map_err(|e| e.to_string())?),
+        Err(_) => Ok(serde_json::Value::Null), // Return null, not empty object
+    }
+}
+
+#[tauri::command]
+async fn delete_wallet_snapshot(
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let state = state.lock().await;
+    let bridge = state.bridge.lock().await;
+    // Atomic Reset: Delete snapshot AND identity
+    let _ = bridge.delete_snapshot();
+    let _ = bridge.delete_identity();
+    Ok(())
+}
+
+use crate::blockchain_bridge::IdentityView; // Import View
+
+#[tauri::command]
+async fn get_identity(
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<IdentityView>, String> { // Return full IdentityView objects
+    let state = state.lock().await;
+    let bridge = state.bridge.lock().await;
+    bridge.get_identity_views().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_active_peers(
+    _state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<usize, String> {
+    Ok(0)
+}
+
+#[tauri::command]
+async fn generate_new_identity(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    alias: String, 
+    emoji: String, // Accept Emoji
+) -> Result<Vec<IdentityView>, String> {
+    let state = state.lock().await;
+    let mut bridge = state.bridge.lock().await;
+    bridge.generate_new_identity(alias, emoji).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -120,22 +210,18 @@ pub fn run() {
             let ollama_manager = Arc::new(OllamaManager::new(Some("llama2".to_string())));
             let ollama_init = ollama_manager.clone();
             
-            // Initialize Ollama in background (but keep instance alive in AppState)
+            // Initialize Ollama in background
             tauri::async_runtime::spawn(async move {
                 let ollama = ollama_init;
-                
                 println!("🔍 Checking Ollama installation...");
                 if !ollama.is_installed() {
                     eprintln!("⚠️  Ollama not found!");
                     eprintln!("📝 Please install from: https://ollama.ai");
                     eprintln!("   Or run: brew install ollama");
                 } else {
-                    // Start Ollama service and pull model
                     match ollama.initialize().await {
                         Ok(_) => {
                             println!("✅ Ollama ready!");
-                            
-                            // Wait for service to be healthy
                             for i in 1..=10 {
                                 if ollama.health_check().await {
                                     println!("✅ Ollama service is healthy");
@@ -157,44 +243,65 @@ pub fn run() {
             // Pass strong reference to mesh setup to store in AppState
             let ollama_state = ollama_manager.clone();
 
-            // Initialize mesh network in background
+            // Initialize System via Bootstrap Workflow
             tauri::async_runtime::spawn(async move {
-                let (intent_tx, intent_rx) = mpsc::unbounded_channel();
-                let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+                // Shared Bridge Resource (Created here first)
+                // Shared Bridge Resource (Created here first)
+                dotenv::dotenv().ok(); // Load .env file
+                let api_key = std::env::var("HELIUS_API_KEY").unwrap_or_else(|_| "7f8b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d".to_string());
+                
+                let bridge = Arc::new(Mutex::new(BlockchainBridge::new(Some(api_key))));
 
-                // Initialize mesh network
-                match MeshNetwork::new().await {
-                    Ok(mut mesh) => {
-                        println!("✅ Mesh network initialized");
+                // 1. Phase 1
+                SystemBootstrap::phase_1_sync(&bridge, &app_handle).await;
 
-                        // Spawn mesh event loop with intent channel
+                // 2. Phase 2
+                SystemBootstrap::phase_2_delegate(&bridge, &app_handle).await;
+
+                // 3. Phase 3 & Network Start
+                match SystemBootstrap::phase_3_network(&app_handle).await {
+                    Ok((mut mesh, intent_tx, mut event_rx, intent_rx, event_tx)) => {
+                        println!("✅ System Bootstrap Complete. Mesh Swarm Active.");
+
+                        // Start Mesh Loop (Background)
                         tokio::spawn(async move {
                             if let Err(e) = mesh.start(event_tx, intent_rx).await {
                                 eprintln!("Mesh network error: {}", e);
                             }
                         });
 
-                        // Forward mesh events to frontend
+                        // Forward Mesh Events to Frontend
                         let handle_clone = app_handle.clone();
                         tokio::spawn(async move {
                             while let Some(event) = event_rx.recv().await {
                                 let _ = handle_clone.emit("mesh-event", event);
                             }
                         });
+
+                        // Initialize Global App State
+                        let state = Arc::new(Mutex::new(AppState {
+                            mesh_tx: Some(intent_tx),
+                            agent: Arc::new(SharkAgent::new(None)),
+                            zk_handler: Arc::new(ZKHandler::new(None)),
+                            ollama: ollama_state,
+                            bridge: bridge, 
+                        }));
+
+                        app_handle.manage(state);
                     }
                     Err(e) => {
-                        eprintln!("❌ Failed to initialize mesh: {}", e);
+                        eprintln!("❌ Bootstrap Failed: {}", e);
+                        // Initialize state even on failure
+                        let state = Arc::new(Mutex::new(AppState {
+                            mesh_tx: None,
+                            agent: Arc::new(SharkAgent::new(None)),
+                            zk_handler: Arc::new(ZKHandler::new(None)),
+                            ollama: ollama_state,
+                            bridge: bridge,
+                        }));
+                        app_handle.manage(state);
                     }
                 }
-
-                let state = Arc::new(Mutex::new(AppState {
-                    mesh_tx: Some(intent_tx),
-                    agent: Arc::new(SharkAgent::new(None)),
-                    zk_handler: Arc::new(ZKHandler::new(None)),
-                    ollama: ollama_state,
-                }));
-
-                app_handle.manage(state);
             });
 
             Ok(())
@@ -202,7 +309,17 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             send_intent_to_mesh,
             negotiate_with_shark,
-            generate_zk_proof
+            generate_zk_proof,
+            sync_blockchain_state,
+            enable_magicblock_trading,
+            get_bridge_status,
+            get_wallet_snapshot,
+            get_wallet_snapshot,
+            delete_wallet_snapshot,
+            app_initializer::kill_switch,
+            get_identity,
+            get_active_peers,
+            generate_new_identity
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -11,20 +11,10 @@ interface ProviderDashboardProps {
 export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({ visible, onClose, onCreateService }) => {
     const [isRelaying, setIsRelaying] = useState(false);
 
-    // Mock Logic
-    const [logs, setLogs] = useState<string[]>([
-        "[15:20] nobody_42a8's Agent requested ZK-Inventory Proof.",
-        "[15:21] local_agent: Generating ZK-Proof (Item exists & not sold).",
-        "[15:22] inco_fhe: Bid $9.1 is below auto-accept. Countering $9.3..."
-    ]);
+    const [logs, setLogs] = useState<string[]>([]);
 
     useEffect(() => {
-        if (visible) {
-            const t = setTimeout(() => {
-                setLogs(prev => [...prev, ">> ALERT: \"High reputation buyer (99%) offering $9.25. Accept?\""]);
-            }, 3000);
-            return () => clearTimeout(t);
-        }
+        // Real logs handled elsewhere
     }, [visible]);
 
     if (!visible) return null;

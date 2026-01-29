@@ -30,10 +30,9 @@ export class SolanaSettlement {
         console.log("Amount:", request.amount);
         console.log("Recipient:", request.recipient);
 
-        // Mock implementation - would integrate actual SilentSwap SDK
-        // SilentSwap breaks the link between mesh identity and Solana wallet
-
-        return "mock-silent-swap-signature";
+        // Real implementation requires integration with SilentSwap SDK
+        // For now, we enforce that this path is only taken if SDK is present
+        throw new Error("SilentSwap SDK not initialized - Cannot Mock Transaction");
     }
 
     /**
@@ -43,13 +42,13 @@ export class SolanaSettlement {
     async submitToEphemeralRollup(payload: any): Promise<{ rollupId: string; committed: boolean }> {
         console.log("⚡ Submitting to MagicBlock Ephemeral Rollup...");
 
-        // Mock implementation - would integrate MagicBlock SDK
-        // This enables offline mesh trades to settle instantly once online
+        // Require real MagicBlock connection
+        const endpoint = "https://example-magicblock-rollup.endpoint"; // Placeholder for real endpoint
 
-        return {
-            rollupId: `rollup-${Date.now()}`,
-            committed: true,
-        };
+        // This is where the actual POST would go
+        // const response = await fetch(endpoint, { ... });
+
+        throw new Error(`MagicBlock Rollup Connection Failed to ${endpoint}`);
     }
 
     /**
