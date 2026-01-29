@@ -21,6 +21,14 @@ export const MeshRadar: React.FC<MeshRadarProps> = ({ peers }) => {
 
                 <div className="absolute w-4 h-4 rounded-full bg-nobody-violet shadow-[0_0_20px_rgba(139,92,246,0.8)]" />
 
+                {/* RELAY RIPPLE EFFECT (Mocked for Demo) */}
+                <motion.div
+                    className="absolute w-[800px] h-[800px] rounded-full border border-nobody-mint/30"
+                    initial={{ scale: 0, opacity: 0 }}
+                    animate={{ scale: 1.2, opacity: 0 }}
+                    transition={{ duration: 4, repeat: Infinity, ease: "easeOut", delay: 2 }}
+                />
+
                 {/* Concentric Radar Rings */}
                 {[1, 2, 3, 4].map((ring) => (
                     <motion.div

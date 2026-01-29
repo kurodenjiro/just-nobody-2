@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { RelayerStatus } from "./RelayerStatus";
 
 interface ProviderDashboardProps {
     visible: boolean;
@@ -8,6 +9,7 @@ interface ProviderDashboardProps {
 }
 
 export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({ visible, onClose, onCreateService }) => {
+    const [isRelaying, setIsRelaying] = useState(false);
 
     // Mock Logic
     const [logs, setLogs] = useState<string[]>([
@@ -65,6 +67,12 @@ export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({ visible, o
                             </button>
                         </div>
                     </DashboardBox>
+
+                    {/* Relayer Mode Status */}
+                    <RelayerStatus
+                        isRelaying={isRelaying}
+                        onToggle={setIsRelaying}
+                    />
 
                     <DashboardBox title="🧠 MERCHANT AGENT STRATEGY">
                         <div className="space-y-2 pt-2 text-xs text-gray-300">

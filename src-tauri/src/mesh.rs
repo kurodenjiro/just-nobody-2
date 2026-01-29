@@ -41,6 +41,8 @@ pub struct PrivacyIntent {
     pub intent_type: String,
     pub payload: String,
     pub encrypted: bool,
+    pub relay_path: Vec<String>,
+    pub relay_fee: Option<String>,
 }
 
 pub struct MeshNetwork {
@@ -198,6 +200,10 @@ impl MeshNetwork {
     }
 
     pub fn broadcast_intent(&mut self, intent: PrivacyIntent) -> Result<(), Box<dyn Error>> {
+        if !Self::verify_relay_integrity(&intent) {
+            return Err("Integrity check failed: Malformed relay path".into());
+        }
+
         let payload = serde_json::to_vec(&intent)?;
         match self.swarm
             .behaviour_mut()
@@ -205,7 +211,7 @@ impl MeshNetwork {
             .publish(self.topic.clone(), payload) 
         {
             Ok(_) => {
-                println!("📤 Intent broadcasted to mesh");
+                println!("📤 Intent broadcasted to mesh (Relay Hop: {})", intent.relay_path.len());
                 Ok(())
             }
             Err(gossipsub::PublishError::InsufficientPeers) => {
@@ -233,6 +239,26 @@ impl MeshNetwork {
             }
             Err(e) => Err(Box::new(e))
         }
+    }
+    pub fn verify_relay_integrity(intent: &PrivacyIntent) -> bool {
+        // Basic integrity check:
+        // 1. Relay path should not be empty (should contain at least sender)
+        // 2. Relay fee should be formatted correctly (simple check for now)
+        
+        if intent.relay_path.is_empty() {
+            println!("❌ Integrity Check Failed: Empty relay path");
+            return false;
+        }
+
+        if let Some(fee) = &intent.relay_fee {
+            if !fee.contains("SOL") && !fee.contains("NEAR") {
+                 println!("⚠️  Warning: Unknown fee format: {}", fee);
+                 // We don't fail validation here for now, just warn
+            }
+        }
+
+        // In a real implementation, we would verify signatures of each hop
+        true
     }
 }
 

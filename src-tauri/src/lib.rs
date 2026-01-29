@@ -38,6 +38,8 @@ async fn send_intent_to_mesh(
                     intent_type: "settlement".to_string(),
                     payload: payload.clone(),
                     encrypted: false,
+                    relay_path: vec!["origin_node".to_string()],
+                    relay_fee: None, // Settlements don't carry relay fees
                 };
                 tx.send(intent).map_err(|e| e.to_string())?;
                 return Ok(format!("Settlement message broadcasted: {}", payload));
@@ -52,6 +54,8 @@ async fn send_intent_to_mesh(
         intent_type: "trade".to_string(),
         payload: payload.clone(),
         encrypted: true,
+        relay_path: vec!["origin_node".to_string()], // Initial hop
+        relay_fee: Some("0.005 SOL".to_string()),     // Default fee
     };
 
     if let Some(tx) = &state_lock.mesh_tx {
