@@ -99,55 +99,140 @@ impl MeshNetwork {
         Ok(MeshNetwork { swarm, topic })
     }
 
-    pub async fn start(&mut self, tx: mpsc::UnboundedSender<MeshEvent>) -> Result<(), Box<dyn Error>> {
+    pub async fn start(
+        &mut self, 
+        tx: mpsc::UnboundedSender<MeshEvent>,
+        mut intent_rx: mpsc::UnboundedReceiver<PrivacyIntent>
+    ) -> Result<(), Box<dyn Error>> {
         // Listen on all interfaces (offline-first mesh)
         self.swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
 
         loop {
-            match self.swarm.next().await {
-                Some(SwarmEvent::NewListenAddr { address, .. }) => {
-                    println!("📡 Listening on {}", address);
-                    let _ = tx.send(MeshEvent::ListeningStarted { address: address.to_string() });
+            tokio::select! {
+                // Handle incoming intents to broadcast
+                Some(intent) = intent_rx.recv() => {
+                    println!("📤 Broadcasting intent to mesh: {:?}", intent);
+                    if let Err(e) = self.broadcast_intent(intent) {
+                        eprintln!("❌ Failed to broadcast intent: {}", e);
+                    }
                 }
-                Some(SwarmEvent::Behaviour(event)) => match event {
-                    MeshBehaviourEvent::Mdns(mdns::Event::Discovered(list)) => {
-                        for (peer_id, multiaddr) in list {
-                            println!("🔍 Peer discovered: {} at {}", peer_id, multiaddr);
-                            self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
-                            let _ = tx.send(MeshEvent::PeerDiscovered {
-                                peer_id: peer_id.to_string(),
-                                address: multiaddr.to_string(),
-                            });
+
+                // Handle libp2p swarm events
+                event = self.swarm.select_next_some() => {
+                    match event {
+                        SwarmEvent::NewListenAddr { address, .. } => {
+                            println!("📡 Listening on {}", address);
+                            let _ = tx.send(MeshEvent::ListeningStarted { address: address.to_string() });
                         }
+                        SwarmEvent::Behaviour(event) => match event {
+                            MeshBehaviourEvent::Mdns(mdns::Event::Discovered(list)) => {
+                                for (peer_id, multiaddr) in list {
+                                    println!("🔍 Peer discovered: {} at {}", peer_id, multiaddr);
+                                    self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                                    let _ = tx.send(MeshEvent::PeerDiscovered {
+                                        peer_id: peer_id.to_string(),
+                                        address: multiaddr.to_string(),
+                                    });
+                                }
+                            }
+                            MeshBehaviourEvent::Mdns(mdns::Event::Expired(list)) => {
+                                for (peer_id, _) in list {
+                                    println!("👻 Peer expired: {}", peer_id);
+                                    self.swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer_id);
+                                }
+                            }
+                            MeshBehaviourEvent::Gossipsub(gossipsub::Event::Message { message, .. }) => {
+                                // Try to parse as PrivacyIntent first
+                                let intent: Result<PrivacyIntent, _> = serde_json::from_slice(&message.data);
+                                if let Ok(intent) = intent {
+                                    // Check if this is a settlement message
+                                    if intent.intent_type == "settlement" {
+                                        // Parse the payload as JSON to get the actual message type
+                                        if let Ok(settlement) = serde_json::from_str::<serde_json::Value>(&intent.payload) {
+                                            let msg_type = settlement.get("type").and_then(|v| v.as_str());
+                                            
+                                            if msg_type == Some("SettlementComplete") {
+                                                println!("✅ Received Settlement Confirmation: {:?}", settlement);
+                                                let _ = tx.send(MeshEvent::SettlementComplete { 
+                                                    details: settlement.to_string() 
+                                                });
+                                            } else if msg_type == Some("DealAccepted") {
+                                                println!("🤝 Received Deal Acceptance: {:?}", settlement);
+                                                let _ = tx.send(MeshEvent::DealAccepted { 
+                                                    details: settlement.to_string() 
+                                                });
+                                            }
+                                        }
+                                    } else {
+                                        // Regular trade intent
+                                        println!("📬 Received Intent: {:?}", intent);
+                                        let _ = tx.send(MeshEvent::IntentReceived { intent });
+                                    }
+                                } else {
+                                    // Try to parse as raw settlement confirmation
+                                    let settlement: Result<serde_json::Value, _> = serde_json::from_slice(&message.data);
+                                    if let Ok(settlement) = settlement {
+                                        let msg_type = settlement.get("type").and_then(|v| v.as_str());
+                                        
+                                        if msg_type == Some("SettlementComplete") {
+                                            println!("✅ Received Settlement Confirmation: {:?}", settlement);
+                                            let _ = tx.send(MeshEvent::SettlementComplete { 
+                                                details: settlement.to_string() 
+                                            });
+                                        } else if msg_type == Some("DealAccepted") {
+                                            println!("🤝 Received Deal Acceptance: {:?}", settlement);
+                                            let _ = tx.send(MeshEvent::DealAccepted { 
+                                                details: settlement.to_string() 
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        },
+                        _ => {}
                     }
-                    MeshBehaviourEvent::Mdns(mdns::Event::Expired(list)) => {
-                        for (peer_id, _) in list {
-                            println!("👻 Peer expired: {}", peer_id);
-                            self.swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer_id);
-                        }
-                    }
-                    MeshBehaviourEvent::Gossipsub(gossipsub::Event::Message { message, .. }) => {
-                        let intent: Result<PrivacyIntent, _> = serde_json::from_slice(&message.data);
-                        if let Ok(intent) = intent {
-                            println!("📬 Received Intent: {:?}", intent);
-                            let _ = tx.send(MeshEvent::IntentReceived { intent });
-                        }
-                    }
-                    _ => {}
-                },
-                _ => {}
+                }
             }
         }
     }
 
     pub fn broadcast_intent(&mut self, intent: PrivacyIntent) -> Result<(), Box<dyn Error>> {
         let payload = serde_json::to_vec(&intent)?;
-        self.swarm
+        match self.swarm
             .behaviour_mut()
             .gossipsub
-            .publish(self.topic.clone(), payload)?;
-        println!("📤 Intent broadcasted to mesh");
-        Ok(())
+            .publish(self.topic.clone(), payload) 
+        {
+            Ok(_) => {
+                println!("📤 Intent broadcasted to mesh");
+                Ok(())
+            }
+            Err(gossipsub::PublishError::InsufficientPeers) => {
+                println!("⚠️  Note: No peers connected (Single-Node Mode). Intent processed locally.");
+                Ok(())
+            }
+            Err(e) => Err(Box::new(e))
+        }
+    }
+
+    pub fn broadcast_raw(&mut self, message: String) -> Result<(), Box<dyn Error>> {
+        let payload = message.as_bytes().to_vec();
+        match self.swarm
+            .behaviour_mut()
+            .gossipsub
+            .publish(self.topic.clone(), payload) 
+        {
+            Ok(_) => {
+                println!("📤 Raw message broadcasted to mesh");
+                Ok(())
+            }
+            Err(gossipsub::PublishError::InsufficientPeers) => {
+                println!("⚠️  Note: No peers connected (Single-Node Mode).");
+                Ok(())
+            }
+            Err(e) => Err(Box::new(e))
+        }
     }
 }
 
@@ -157,4 +242,6 @@ pub enum MeshEvent {
     ListeningStarted { address: String },
     PeerDiscovered { peer_id: String, address: String },
     IntentReceived { intent: PrivacyIntent },
+    DealAccepted { details: String },
+    SettlementComplete { details: String },
 }

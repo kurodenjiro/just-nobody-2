@@ -45,13 +45,17 @@ impl ZKHandler {
             return Err("Bid exceeds price ceiling".into());
         }
 
-        // Execute Noir build command
+        // Execute Noir build command in blocking task to avoid freezing async runtime
         // Note: This requires nargo (Noir compiler) to be installed
-        let output = Command::new("nargo")
-            .args(&["prove", &self.circuit_path])
-            .output();
+        let circuit_path = self.circuit_path.clone();
+        
+        let output_result = tokio::task::spawn_blocking(move || {
+            Command::new("nargo")
+                .args(&["prove", &circuit_path])
+                .output()
+        }).await?;
 
-        match output {
+        match output_result {
             Ok(result) if result.status.success() => {
                 // Read the generated proof
                 let proof_data = std::fs::read_to_string(format!("{}/proofs/proof.hex", self.circuit_path))
@@ -68,7 +72,7 @@ impl ZKHandler {
             }
             _ => {
                 // Fallback: Generate mock proof for demo purposes
-                println!("⚠️  Noir compiler not found, generating mock proof");
+                println!("⚠️  Noir compiler not found or failed, generating mock proof");
                 self.generate_mock_proof(request)
             }
         }
